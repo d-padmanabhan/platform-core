@@ -1,0 +1,124 @@
+---
+# Pre-commit hooks configuration
+# Install: pre-commit install
+# Update:  pre-commit autoupdate
+# Run:     pre-commit run --all-files
+#
+# Notes:
+# - This repo is Python-only; do not add Terraform/Go/JS hooks unless those ecosystems appear in-repo.
+# - ggshield is configured for pre-push; set GITGUARDIAN_API_KEY to enable it.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+      - id: end-of-file-fixer
+        name: Fix end-of-file newline
+      - id: check-yaml
+        name: Check YAML syntax
+      - id: check-json
+        name: Check JSON syntax
+      - id: check-merge-conflict
+        name: Check for merge conflict markers
+      - id: detect-private-key
+        name: Detect Private Keys
+      - id: detect-aws-credentials
+        name: Detect AWS Credentials
+        args: [--allow-missing-credentials]
+      - id: mixed-line-ending
+        name: Normalize line endings (LF)
+        args: [--fix=lf]
+      - id: check-added-large-files
+        name: Check added large files
+      - id: check-executables-have-shebangs
+        name: Check executables have shebangs
+      - id: check-symlinks
+        name: Check symlinks
+
+  - repo: https://github.com/psf/black
+    rev: 26.1.0
+    hooks:
+      - id: black
+        name: Black (Python formatter)
+        language_version: python3
+        files: ^src/.*\.py$
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.14
+    hooks:
+      - id: ruff
+        name: Ruff (Python linter)
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^src/.*\.py$
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.47.0
+    hooks:
+      - id: markdownlint
+        name: Markdownlint
+        args: ["--config", ".markdownlint.yaml"]
+        files: ^(README\.md|docs/.*\.md)$
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        name: YAML Lint
+        args: ["-c", ".yamllint.yaml"]
+        files: \.(yaml)$
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.10
+    hooks:
+      - id: actionlint
+        name: Actionlint (GitHub Actions)
+        args:
+          - -config-file
+          - .actionlint.yaml
+          - -ignore=workflow is empty
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        name: ShellCheck (shell linter)
+        files: \.sh$
+        args: [--severity=warning]
+
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2
+    hooks:
+      - id: shfmt
+        name: shfmt (shell formatter)
+        files: \.sh$
+        args: ["-l", "-w", "-i", "2"]
+
+  # Enforce commit message rules from .commitlintrc.yaml at commit time
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.24.0
+    hooks:
+      - id: commitlint
+        name: Commitlint
+        stages: [commit-msg]
+
+  # Validate GitHub workflow + dependabot YAML schemas
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.36.1
+    hooks:
+      - id: check-github-workflows
+        name: Validate GitHub workflows
+        stages: [pre-push]
+      - id: check-dependabot
+        name: Validate Dependabot config
+        stages: [pre-push]
+
+  # Secret scanning (requires GitGuardian API key in environment)
+  - repo: https://github.com/gitguardian/ggshield
+    rev: v1.47.0
+    hooks:
+      - id: ggshield
+        name: Secret Scan (ggshield)
+        language_version: python3
+        stages: [pre-push]

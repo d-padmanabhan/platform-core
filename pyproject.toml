@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "platform-core"
+version = "0.0.0"
+description = "Shared platform Python library (AWS/Cloudflare/Vault utilities + core helpers)"
+readme = "README.md"
+requires-python = ">=3.14"
+license = { text = "Proprietary" }
+authors = [{ name = "ACME" }]
+
+dependencies = [
+  "boto3",
+  "botocore",
+  "requests",
+]
+
+[project.optional-dependencies]
+kubernetes = ["kubernetes"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 120
+# NOTE: Black target-version must be a supported value (py313 is the latest supported as of now).
+# We still run on Python 3.14; the target-version controls formatting rules only.
+target-version = ["py313"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle errors
+  "F",  # pyflakes
+  "I",  # isort
+]
+ignore = []
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
+[tool.mypy]
+python_version = "3.14"
+# Focus on first-party type safety; avoid requiring heavy third-party stub packages initially.
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+
+# Third-party SDKs (boto3/requests) tend to surface `Any` without extra stub packages.
+# Keep mypy useful by not failing the build on these until we decide to add stubs.
+disable_error_code = ["import-untyped", "no-any-return"]
