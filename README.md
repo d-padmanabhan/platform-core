@@ -1,6 +1,6 @@
 # platform-core
 
-Shared platform Python library (AWS/Cloudflare/Vault utilities + core helpers).
+Shared platform Python library (AWS/Cloudflare/Kubernetes/Vault utilities + core helpers).
 
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196.svg?logo=conventionalcommits&logoColor=white)](https://www.conventionalcommits.org/)
 ![AWS](https://img.shields.io/badge/AWS-SDK-232F3E?logo=amazonaws&logoColor=white)
@@ -9,8 +9,7 @@ Shared platform Python library (AWS/Cloudflare/Vault utilities + core helpers).
 ![Vault](https://img.shields.io/badge/Vault-KV%20v2-000000?logo=vault&logoColor=white)
 
 > [!NOTE]
-> This repository is currently private, but the README is written in an “open-source style”
-> so it’s easy to onboard and reuse across multiple projects.
+> This README is written in an “open-source style” so it’s easy to onboard and reuse across multiple projects.
 
 ## Table of Contents
 
