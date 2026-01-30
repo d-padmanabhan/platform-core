@@ -5,8 +5,8 @@ Shared platform Python library (AWS/Cloudflare/Vault utilities + core helpers).
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196.svg?logo=conventionalcommits&logoColor=white)](https://www.conventionalcommits.org/)
 ![AWS](https://img.shields.io/badge/AWS-SDK-232F3E?logo=amazonaws&logoColor=white)
 ![Cloudflare](https://img.shields.io/badge/Cloudflare-API-F38020?logo=cloudflare&logoColor=white)
-![Vault](https://img.shields.io/badge/Vault-KV%20v2-000000?logo=vault&logoColor=white)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-Client-326CE5?logo=kubernetes&logoColor=white)
+![Vault](https://img.shields.io/badge/Vault-KV%20v2-000000?logo=vault&logoColor=white)
 
 > [!NOTE]
 > This repository is currently private, but the README is written in an “open-source style”
