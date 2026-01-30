@@ -1,0 +1,11 @@
+# Normalize line endings and avoid platform-specific churn
+* text=auto eol=lf
+
+# Treat common binary assets as binary (no diff / CRLF transforms)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary

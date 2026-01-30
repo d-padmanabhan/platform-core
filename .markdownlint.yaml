@@ -1,0 +1,14 @@
+---
+default: true
+
+# Line length
+MD013:
+  line_length: 120
+  code_blocks: false
+  tables: false
+
+# Allow non-H1 first headings in templates (PR template, etc.)
+MD041: false
+
+# Allow inline HTML (often needed for GitHub rendering quirks)
+MD033: false

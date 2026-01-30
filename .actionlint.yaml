@@ -1,0 +1,5 @@
+---
+# actionlint configuration
+#
+# Keep minimal to avoid repo-specific coupling.
+# Add rules or exclusions here if needed.

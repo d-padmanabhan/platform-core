@@ -1,0 +1,12 @@
+---
+# Mirror of .commitlintrc.yaml for tools that expect a non-dotted filename.
+extends:
+  - "@commitlint/config-conventional"
+
+rules:
+  header-max-length:
+    - 2
+    - always
+    - 72
+  body-max-line-length: [0]
+  footer-max-line-length: [0]
