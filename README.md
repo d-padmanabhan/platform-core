@@ -66,12 +66,14 @@ python3 -m pip install -e ".[kubernetes]"
 
 ## Quickstart
 
-### Logging
+### AWS
 
 ```python
-from platform_core.utils import logger
+from platform_core.aws import AWSUtils
 
-logger.info("hello from platform-core")
+aws = AWSUtils()
+sts = aws.create_boto3_client("sts", "us-east-1")
+print(sts.get_caller_identity()["Account"])
 ```
 
 ### Cloudflare API
@@ -98,20 +100,24 @@ data = client.read_credentials(secrets_engine="secret", secret_path="team/app/cr
 print(data)
 ```
 
-### AWS
+### Kubernetes (optional)
 
 ```python
-from platform_core.aws import AWSUtils
+from platform_core.kubernetes import create_api_client
 
-aws = AWSUtils()
-sts = aws.create_boto3_client("sts", "us-east-1")
-print(sts.get_caller_identity()["Account"])
+api_client = create_api_client()
+
+# Requires: python3 -m pip install -e ".[kubernetes]"
+from kubernetes import client as k8s_client
+
+v1 = k8s_client.CoreV1Api(api_client)
+print([ns.metadata.name for ns in v1.list_namespace().items])
 ```
 
 ## Modules
 
 - **`platform_core.utils`**
-  - Logger setup + small helpers
+  - Core helpers (logging, JSON, env, string utilities)
 - **`platform_core.aws`**
   - `AWSUtils` and helper managers (DynamoDB/SQS)
 - **`platform_core.cloudflare`**
