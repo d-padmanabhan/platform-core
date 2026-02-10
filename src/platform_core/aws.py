@@ -37,15 +37,24 @@ Usage:
     messages = sqs_manager.receive_messages("https://sqs.us-west-2.amazonaws.com/123456789012/my-queue")
 """
 
+from __future__ import annotations
+
 import os
+import time
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable
 
 import boto3
 from boto3.resources.base import ServiceResource
 from botocore.client import BaseClient
 from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError, ParamValidationError
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    NoCredentialsError,
+    ParamValidationError,
+    UnknownServiceError,
+)
 
 from .utils import logger
 
@@ -129,7 +138,24 @@ class AWSUtils:
         Args:
             **kwargs: Additional keyword arguments for boto3 client/resource.
         """
-        self.kwargs: Dict[str, Any] = kwargs
+        self.kwargs: dict[str, Any] = kwargs
+
+    def _boto_kwargs(self, **overrides: Any) -> dict[str, Any]:
+        """
+        Merge instance-level boto3 kwargs with per-call overrides.
+
+        Precedence:
+        - Per-call kwargs win over instance kwargs
+
+        Safety:
+        - Do not allow passing values that would conflict with explicit parameters
+          we pass to boto3 (e.g., region_name, config) to avoid TypeError due to
+          duplicate keyword arguments.
+        """
+        merged: dict[str, Any] = {**self.kwargs, **overrides}
+        merged.pop("region_name", None)
+        merged.pop("config", None)
+        return merged
 
     @classmethod
     def _validate_region(cls, region: str) -> str:
@@ -164,13 +190,14 @@ class AWSUtils:
         """
         region_name = self._validate_region(region_name)
         custom_boto3_retry_config: Config = Config(retries={"max_attempts": 5, "mode": "standard"})
+        boto_kwargs = self._boto_kwargs(**kwargs)
         client: BaseClient = boto3.client(
             service_name,
             region_name=region_name,
             config=custom_boto3_retry_config,
-            **kwargs,
+            **boto_kwargs,
         )
-        sts_client: BaseClient = boto3.client("sts", region_name=region_name, **kwargs)
+        sts_client: BaseClient = boto3.client("sts", region_name=region_name, **boto_kwargs)
         account_id = sts_client.get_caller_identity().get("Account")
 
         logger.debug(
@@ -200,13 +227,14 @@ class AWSUtils:
         region_name = self._validate_region(region_name)
         if self._has_resource(service_name):
             custom_boto3_retry_config: Config = Config(retries={"max_attempts": 5, "mode": "standard"})
+            boto_kwargs = self._boto_kwargs(**kwargs)
             resource: ServiceResource = boto3.resource(
                 service_name,
                 region_name=region_name,
                 config=custom_boto3_retry_config,
-                **kwargs,
+                **boto_kwargs,
             )
-            sts_client: BaseClient = boto3.client("sts", region_name=region_name, **kwargs)
+            sts_client: BaseClient = boto3.client("sts", region_name=region_name, **boto_kwargs)
             account_id = sts_client.get_caller_identity().get("Account")
             logger.info(
                 "Created boto3 resource for %s in region %s for account %s",
@@ -232,13 +260,11 @@ class AWSUtils:
         try:
             boto3.resource(service_name)
             return True
-        except AttributeError:
-            return False
-        except Exception:  # pylint: disable=broad-exception-caught
+        except (AttributeError, UnknownServiceError, BotoCoreError, ClientError):
             return False
 
     @handle_aws_api_error
-    def sts_assume_role(self, role_arn: str, role_session_name: str, region: str, **kwargs: Any) -> Dict[str, str]:
+    def sts_assume_role(self, role_arn: str, role_session_name: str, region: str, **kwargs: Any) -> dict[str, str]:
         """
         Assume an IAM role and return temporary security credentials.
 
@@ -251,8 +277,9 @@ class AWSUtils:
         Returns:
             The temporary security credentials for the assumed role
         """
-        client: BaseClient = boto3.client("sts", region_name=region, **kwargs)
-        response: Dict[str, Any] = client.assume_role(RoleArn=role_arn, RoleSessionName=role_session_name)
+        boto_kwargs = self._boto_kwargs(**kwargs)
+        client: BaseClient = boto3.client("sts", region_name=region, **boto_kwargs)
+        response: dict[str, Any] = client.assume_role(RoleArn=role_arn, RoleSessionName=role_session_name)
         return response["Credentials"]
 
     @handle_aws_api_error
@@ -266,7 +293,7 @@ class AWSUtils:
         Returns:
             The AWS account ID.
         """
-        client: BaseClient = boto3.client("sts", region_name=region)
+        client: BaseClient = boto3.client("sts", region_name=region, **self._boto_kwargs())
         account_id: str = client.get_caller_identity()["Account"]
         return account_id
 
@@ -307,8 +334,8 @@ class AWSUtils:
         client: BaseClient,
         operation_name: str,
         result_key: str,
-        **kwargs: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """
         Retrieve paginated results from an AWS API call.
 
@@ -342,7 +369,7 @@ class DynamoDBManager:
         self,
         table_name: str,
         dynamodb_resource: Any,
-        dynamodb_client: Optional[BaseClient] = None,
+        dynamodb_client: BaseClient | None = None,
     ) -> None:
         """
         Initialize the DynamoDBManager instance.
@@ -358,7 +385,7 @@ class DynamoDBManager:
         self.client = dynamodb_client or dynamodb_resource.meta.client
 
     @handle_aws_api_error
-    def get_item(self, key: Dict[str, Any], projection_expression: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def get_item(self, key: dict[str, Any], projection_expression: str | None = None) -> dict[str, Any] | None:
         """
         Retrieve a single item from the DynamoDB table.
 
@@ -369,7 +396,7 @@ class DynamoDBManager:
         Returns:
             The retrieved item, or None if not found.
         """
-        params: Dict[str, Any] = {"Key": key}
+        params: dict[str, Any] = {"Key": key}
         if projection_expression:
             params["ProjectionExpression"] = projection_expression
 
@@ -377,7 +404,7 @@ class DynamoDBManager:
         return response.get("Item")
 
     @handle_aws_api_error
-    def save_item(self, item: Dict[str, Any]) -> None:
+    def save_item(self, item: dict[str, Any]) -> None:
         """
         Save an item to the DynamoDB table.
 
@@ -388,7 +415,7 @@ class DynamoDBManager:
         logger.debug("Saved item to DynamoDB: %s", item)
 
     @handle_aws_api_error
-    def batch_save_items(self, items: List[Dict[str, Any]]) -> None:
+    def batch_save_items(self, items: list[dict[str, Any]]) -> None:
         """
         Save multiple items to the DynamoDB table using BatchWriteItem.
 
@@ -405,12 +432,35 @@ class DynamoDBManager:
             batch = items[i : i + batch_size]
             request_items = {self.table_name: [{"PutRequest": {"Item": item}} for item in batch]}
 
-            self.client.batch_write_item(RequestItems=request_items)
+            response = self.client.batch_write_item(RequestItems=request_items)
+
+            # Retry unprocessed items with exponential backoff to prevent silent data loss
+            unprocessed = response.get("UnprocessedItems", {})
+            retries = 0
+            max_retries = 5
+            while unprocessed and retries < max_retries:
+                retries += 1
+                time.sleep(2**retries)
+                logger.warning(
+                    "Retrying %s unprocessed items (attempt %s/%s)",
+                    sum(len(v) for v in unprocessed.values()),
+                    retries,
+                    max_retries,
+                )
+                response = self.client.batch_write_item(RequestItems=unprocessed)
+                unprocessed = response.get("UnprocessedItems", {})
+
+            if unprocessed:
+                unprocessed_count = sum(len(v) for v in unprocessed.values())
+                raise RuntimeError(
+                    f"Failed to write {unprocessed_count} items to DynamoDB table "
+                    f"{self.table_name} after {max_retries} retries"
+                )
 
         logger.info("Batch saved %s items to DynamoDB table: %s", len(items), self.table_name)
 
     @handle_aws_api_error
-    def delete_item(self, key: Dict[str, Any]) -> None:
+    def delete_item(self, key: dict[str, Any]) -> None:
         """
         Delete an item from the DynamoDB table.
 
@@ -423,11 +473,11 @@ class DynamoDBManager:
     @handle_aws_api_error
     def get_all_items(
         self,
-        key_condition_expression: Optional[Any] = None,
-        expression_attribute_values: Optional[Dict[str, Any]] = None,
-        index_name: Optional[str] = None,
-        projection_expression: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        key_condition_expression: Any | None = None,
+        expression_attribute_values: dict[str, Any] | None = None,
+        index_name: str | None = None,
+        projection_expression: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Retrieve all items from the DynamoDB table, optionally using a specified index and projection.
 
@@ -440,7 +490,7 @@ class DynamoDBManager:
         Returns:
             A list of all items retrieved from the table.
         """
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         try:
             if key_condition_expression:
                 response = self.table.query(
@@ -462,7 +512,7 @@ class DynamoDBManager:
             else:
                 # Perform a Scan operation
                 paginator = self.client.get_paginator("scan")
-                operation_parameters: Dict[str, Any] = {"TableName": self.table.name}
+                operation_parameters: dict[str, Any] = {"TableName": self.table.name}
                 if projection_expression:
                     operation_parameters["ProjectionExpression"] = projection_expression
 
@@ -477,16 +527,16 @@ class DynamoDBManager:
             raise
 
     @handle_aws_api_error
-    def query_items(
+    def query_items(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
-        index_name: Optional[str],
+        index_name: str | None,
         key_condition_expression: str,
-        expression_attribute_values: Dict[str, Any],
-        expression_attribute_names: Optional[Dict[str, str]] = None,
-        projection_expression: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        expression_attribute_values: dict[str, Any],
+        expression_attribute_names: dict[str, str] | None = None,
+        projection_expression: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Query items from DynamoDB with optional index and projection."""
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         query_params = {
             "KeyConditionExpression": key_condition_expression,
             "ExpressionAttributeValues": expression_attribute_values,
@@ -535,8 +585,8 @@ class SQSManager:
         self,
         queue_url: str,
         message_body: str,
-        message_attributes: Optional[Dict[str, Dict[str, str]]] = None,
-    ) -> Dict[str, Any]:
+        message_attributes: dict[str, dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
         """
         Send a message to an SQS queue.
 
@@ -548,21 +598,21 @@ class SQSManager:
         Returns:
             The response from the SQS send_message call.
         """
-        send_message_kwargs: Dict[str, Any] = {
+        send_message_kwargs: dict[str, Any] = {
             "QueueUrl": queue_url,
             "MessageBody": message_body,
         }
         if message_attributes:
             send_message_kwargs["MessageAttributes"] = message_attributes
 
-        response: Dict[str, Any] = self.sqs_client.send_message(**send_message_kwargs)
+        response: dict[str, Any] = self.sqs_client.send_message(**send_message_kwargs)
         logger.info("Message sent to SQS queue: %s", queue_url)
         return response
 
     @handle_aws_api_error
     def receive_messages(
         self, queue_url: str, max_messages: int = 10, wait_time_seconds: int = 20
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Receive messages from an SQS queue.
 
@@ -574,12 +624,12 @@ class SQSManager:
         Returns:
             A list of received messages.
         """
-        response: Dict[str, Any] = self.sqs_client.receive_message(
+        response: dict[str, Any] = self.sqs_client.receive_message(
             QueueUrl=queue_url,
             MaxNumberOfMessages=max_messages,
             WaitTimeSeconds=wait_time_seconds,
         )
-        messages: List[Dict[str, Any]] = response.get("Messages", [])
+        messages: list[dict[str, Any]] = response.get("Messages", [])
         logger.info("Received %s messages from SQS queue: %s", len(messages), queue_url)
         return messages
 

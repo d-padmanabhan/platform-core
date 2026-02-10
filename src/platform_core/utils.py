@@ -28,6 +28,8 @@ Usage:
 
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -35,11 +37,13 @@ import re
 import sys
 import time
 from collections.abc import Callable
-from functools import wraps
-from typing import Any, Tuple, Type, TypeVar
+from functools import lru_cache, wraps
+from pathlib import Path
+from typing import Any, ParamSpec, TextIO, TypeVar, cast
 
+P = ParamSpec("P")
 T = TypeVar("T")
-ExceptionTypes = Tuple[Type[Exception], ...]
+ExceptionTypes = tuple[type[BaseException], ...]
 
 
 def _callable_name(func: Callable[..., Any]) -> str:
@@ -87,12 +91,13 @@ def setup_custom_logger(name: str) -> logging.Logger:
 
             @staticmethod
             def converter(seconds: float | None) -> time.struct_time:
+                """Convert timestamp to UTC struct_time."""
                 return time.gmtime(seconds)
 
         formatter: UTCFormatter = UTCFormatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%c %Z")
 
         if not logger_obj.handlers:
-            stream_handler: logging.StreamHandler = logging.StreamHandler()
+            stream_handler: logging.StreamHandler[TextIO] = logging.StreamHandler()
             stream_handler.setFormatter(formatter)
             logger_obj.addHandler(stream_handler)
 
@@ -103,7 +108,7 @@ def setup_custom_logger(name: str) -> logging.Logger:
 logger: logging.Logger = setup_custom_logger(__name__)
 
 
-def measure_execution_time(func: Callable[..., T]) -> Callable[..., T]:
+def measure_execution_time(func: Callable[P, T]) -> Callable[P, T]:
     """
     Decorator to measure the execution time of a function.
 
@@ -117,7 +122,7 @@ def measure_execution_time(func: Callable[..., T]) -> Callable[..., T]:
     """
 
     @wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> T:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
         start_time = time.time()
         result = func(*args, **kwargs)
         execution_time = time.time() - start_time
@@ -127,7 +132,7 @@ def measure_execution_time(func: Callable[..., T]) -> Callable[..., T]:
     return wrapper
 
 
-def log_function_details(func: Callable[..., T]) -> Callable[..., T]:
+def log_function_details(func: Callable[P, T]) -> Callable[P, T]:
     """
     Decorator to log function call details - arguments and return value.
 
@@ -141,7 +146,7 @@ def log_function_details(func: Callable[..., T]) -> Callable[..., T]:
     """
 
     @wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> T:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
         args_repr = [repr(a) for a in args]
         kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
         signature = ", ".join(args_repr + kwargs_repr)
@@ -153,12 +158,13 @@ def log_function_details(func: Callable[..., T]) -> Callable[..., T]:
     return wrapper
 
 
-def memoize(func: Callable[..., T]) -> Callable[..., T]:
+def memoize(func: Callable[P, T]) -> Callable[P, T]:
     """
     Decorator to cache the results of a function call based on its arguments.
 
-    This decorator implements a simple memoization technique to cache function results.
-    It supports both positional and keyword arguments, and tracks cache hits/misses.
+    This decorator implements memoization using an LRU cache with a maximum size
+    of 256 entries to prevent unbounded memory growth. It supports both positional
+    and keyword arguments, and tracks cache hits/misses.
 
     Args:
         func: The function to be decorated.
@@ -166,42 +172,51 @@ def memoize(func: Callable[..., T]) -> Callable[..., T]:
     Returns:
         A wrapped function with caching capability.
     """
-    cache: dict[tuple, Any] = {}
-    hits = 0
-    misses = 0
+    MAX_CACHE_SIZE = 256  # pylint: disable=invalid-name
+
+    @lru_cache(maxsize=MAX_CACHE_SIZE)
+    def cached_call(args_key: tuple[Any, ...], kwargs_items: tuple[tuple[str, Any], ...]) -> T:
+        if kwargs_items:
+            return func(*args_key, **dict(kwargs_items))
+        return func(*args_key)  # type: ignore[call-arg]
 
     @wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> T:
-        nonlocal hits, misses
-        # Create cache key from both args and sorted kwargs
-        key = (*args, *(sorted(kwargs.items())))
-        if key in cache:
-            hits += 1
-            return cache[key]
-        misses += 1
-        result = func(*args, **kwargs)
-        cache[key] = result
-        return result
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+        # LRU cache requires hashable keys. This decorator can only cache calls
+        # whose args/kwargs values are hashable (same constraint as the old dict-key approach).
+        args_key: tuple[Any, ...] = tuple(args)
+        kwargs_items: tuple[tuple[str, Any], ...] = tuple(sorted(kwargs.items()))
 
-    def cache_info() -> dict[str, int]:
+        # Pre-flight hashability check to avoid double-invoking the wrapped function
+        # (if the function itself raises TypeError, we should not swallow/retry it).
+        hash((args_key, kwargs_items))
+
+        return cached_call(args_key, kwargs_items)
+
+    def cache_info() -> dict[str, int | None]:
         """
         Provides information about the cache.
 
         Returns:
             A dictionary containing cache statistics.
         """
-        return {"hits": hits, "misses": misses, "size": len(cache)}
+        info = cached_call.cache_info()  # pylint: disable=no-value-for-parameter
+        return {"hits": info.hits, "misses": info.misses, "size": info.currsize, "maxsize": info.maxsize}
+
+    def cache_clear() -> None:
+        """Clear the cache."""
+        cached_call.cache_clear()
 
     # Avoid direct attribute assignment to satisfy stricter type checkers (e.g., mypy/ty).
-    setattr(wrapper, "cache", cache)
     setattr(wrapper, "cache_info", cache_info)
-    return wrapper
+    setattr(wrapper, "cache_clear", cache_clear)
+    return cast(Callable[P, T], wrapper)
 
 
 def exponential_backoff(
     max_retries: int,
     exceptions: ExceptionTypes = (Exception,),
-) -> Callable[[Callable[..., T]], Callable[..., T]]:
+) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """
     Decorator to retry a function with exponential backoff in case of exceptions.
 
@@ -217,9 +232,9 @@ def exponential_backoff(
         RuntimeError: If the maximum number of retries is exceeded.
     """
 
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+    def decorator(func: Callable[P, T]) -> Callable[P, T]:
         @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> T:
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
             retries = 0
             while True:
                 try:
@@ -274,7 +289,7 @@ def print_json(data: Any) -> Any:
     return data
 
 
-def load_json_file(file_name: str) -> dict:
+def load_json_file(file_name: str) -> dict[str, Any]:
     """
     Loads and parses a JSON file from the specified folder path.
 
@@ -291,14 +306,15 @@ def load_json_file(file_name: str) -> dict:
     Example:
         api_config = load_json_file("api-config.json")
     """
-    file_path = os.path.join(file_name)
+    file_path = Path(file_name)
 
     logger.debug("Loading JSON file from: %s", file_path)
 
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = json.loads(file_path.read_text(encoding="utf-8"))
         logger.debug("Successfully loaded JSON file: %s", file_name)
+        if not isinstance(data, dict):
+            raise ValueError(f"JSON root must be an object: {file_name}")
         return data
     except FileNotFoundError:
         logger.error("JSON file not found: %s", file_path)
@@ -324,12 +340,12 @@ def save_json_file(file_name: str, data: Any, indent: int = 4) -> None:
     Example:
         save_json_file("api-config.json", api_config)
     """
-    file_path = os.path.join(file_name)
+    file_path = Path(file_name)
 
     logger.debug("Saving data to JSON file: %s", file_path)
 
     try:
-        with open(file_path, "w", encoding="utf-8") as f:
+        with file_path.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=indent)
         logger.debug("Successfully saved data to JSON file: %s", file_name)
     except TypeError as exc:
@@ -399,18 +415,12 @@ def validate_environment_variables(required_vars: list[str]) -> tuple[str, ...]:
         >>> print(region, profile)
         'us-west-2' 'dev-profile'
     """
-    values: list[str] = []
-    missing_vars: list[str] = []
-
-    for key in required_vars:
-        value = os.getenv(key)
-        if not value:
-            missing_vars.append(key)
-            continue
-        values.append(value)
+    env_values = {key: os.getenv(key) for key in required_vars}
+    missing_vars = [key for key, value in env_values.items() if not value]
 
     if missing_vars:
         logger.error("The following required environment variables are not set: %s", ", ".join(missing_vars))
         sys.exit(1)
 
-    return tuple(values)
+    # After validation, we know all values are non-None
+    return tuple(str(env_values[key]) for key in required_vars)

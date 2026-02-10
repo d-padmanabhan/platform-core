@@ -17,8 +17,10 @@ Dependencies:
     - utils.logger: For consistent logging across the application
 """
 
+from __future__ import annotations
+
 import os
-from typing import Any, Dict
+from typing import Any
 
 import requests
 from requests.exceptions import RequestException
@@ -61,7 +63,7 @@ class VaultClient:
         self.session = requests.Session()
         self.session.headers.update({"X-Vault-Token": self.token, "Content-Type": "application/json"})
 
-    def store_credentials(self, secrets_engine: str, secret_path: str, credentials: Dict[str, Any]) -> None:
+    def store_credentials(self, secrets_engine: str, secret_path: str, credentials: dict[str, Any]) -> None:
         """
         Store a credentials dict in Vault (KV v2).
 
@@ -90,7 +92,7 @@ class VaultClient:
             logger.error("Failed to store secret data in Vault at %s", vault_api_path, exc_info=True)
             raise
 
-    def read_credentials(self, secrets_engine: str, secret_path: str) -> Dict[str, Any]:
+    def read_credentials(self, secrets_engine: str, secret_path: str) -> dict[str, Any]:
         """
         Retrieve a credentials dict from Vault (KV v2).
 
@@ -99,7 +101,7 @@ class VaultClient:
             secret_path: Secret path within the mount (e.g., "team/app/credentials").
 
         Returns:
-            Dict[str, Any]: Retrieved credentials.
+            Retrieved credentials.
 
         Raises:
             RequestException: If the Vault API request fails.
@@ -145,5 +147,5 @@ def create_vault_client() -> VaultClient:
     try:
         return VaultClient()
     except ValueError as e:
-        logger.error("Failed to create Vault client: %s", str(e))
+        logger.error("Failed to create Vault client: %s", e)
         raise

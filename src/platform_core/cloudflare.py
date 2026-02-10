@@ -26,13 +26,16 @@ Example:
         )
 """
 
+from __future__ import annotations
+
 # Standard library
 import os
 import random
 import time
 import warnings
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Dict, Generator, List
+from typing import Any
 
 # Third-party
 from requests import RequestException, Response, Session, adapters
@@ -107,7 +110,7 @@ class CloudflareAPI:
         """
         return f"{self.base_url}{endpoint}"
 
-    def make_paginated_request(self, method: str, endpoint: str, **kwargs) -> List[Dict[str, Any]]:
+    def make_paginated_request(self, method: str, endpoint: str, **kwargs: Any) -> list[dict[str, Any]]:
         """
         Makes a paginated HTTP request to the Cloudflare API, retrieving all pages of data.
 
@@ -121,17 +124,17 @@ class CloudflareAPI:
             **kwargs: Additional keyword arguments for the request.
 
         Returns:
-            List[Dict[str, Any]]: A list of results aggregated from all pages.
+            A list of results aggregated from all pages.
 
         Raises:
             RuntimeError: If the request fails after all retries.
         """
         warnings.warn(
-            "make_request() is deprecated. Use make_api_request() instead.",
+            "make_paginated_request() is deprecated. Use make_api_request() instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        all_results: List[Dict[str, Any]] = []
+        all_results: list[dict[str, Any]] = []
         url: str = self._build_url(endpoint)
         page: int = 1
 
@@ -172,7 +175,7 @@ class CloudflareAPI:
 
         return all_results
 
-    def _simple_request(self, method: str, url: str, **kwargs) -> Dict[str, Any]:
+    def _simple_request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
         """
         Makes a simple HTTP request with bounded retries for transient failures.
 
@@ -182,7 +185,7 @@ class CloudflareAPI:
             **kwargs: Additional keyword arguments for the request.
 
         Returns:
-            Dict[str, Any]: The API response.
+            The API response (decoded JSON object).
 
         Raises:
             RequestException: If the request fails after retries or returns a non-2xx response.
@@ -248,7 +251,7 @@ class CloudflareAPI:
         # Defensive: the loop should always return or raise.
         raise RuntimeError("Unreachable: Cloudflare request retry loop exhausted")
 
-    def make_request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
+    def make_request(self, method: str, endpoint: str, **kwargs: Any) -> dict[str, Any]:
         """
         Makes a non-paginated HTTP request to the Cloudflare API.
 
@@ -262,7 +265,7 @@ class CloudflareAPI:
             **kwargs: Additional keyword arguments for the request.
 
         Returns:
-            Dict[str, Any]: The API response.
+            The API response (decoded JSON object).
 
         Raises:
             RuntimeError: If the request fails after all retries.
@@ -281,7 +284,7 @@ class CloudflareAPI:
         # Use print_json to display the response and get the original data back
         return print_json(response)
 
-    def make_api_request(self, method: str, endpoint: str, params=None, **kwargs) -> Any:
+    def make_api_request(self, method: str, endpoint: str, params: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         """
         Makes a request to the Cloudflare API, automatically handling pagination if needed.
 
@@ -297,10 +300,10 @@ class CloudflareAPI:
             **kwargs: Additional keyword arguments for the request.
 
         Returns:
-            Any: Either a list of results (for paginated responses) or a single result object.
-            None: If an error occurs or the response is invalid.
+            Either a list of results (for paginated responses) or a single result object.
 
         Raises:
+            RuntimeError: For HTTP/request failures.
             ValueError: If response format is unexpected.
         """
         url: str = self._build_url(endpoint)
@@ -310,7 +313,9 @@ class CloudflareAPI:
 
         return self._handle_paginated_get(url, endpoint, params, **kwargs)
 
-    def _handle_non_get_request(self, url: str, endpoint: str, method: str, params, **kwargs) -> Any:
+    def _handle_non_get_request(
+        self, url: str, endpoint: str, method: str, params: dict[str, Any] | None, **kwargs: Any
+    ) -> Any:
         """
         Handle non-GET requests (POST, PUT, DELETE).
 
@@ -322,19 +327,20 @@ class CloudflareAPI:
             **kwargs: Additional request arguments.
 
         Returns:
-            Any: The result from the response, or None on error.
+            The result from the response.
         """
         try:
             response = self._simple_request(method, url, params=params, **kwargs)
         except (RequestException, ValueError) as exc:
-            logger.error("Error processing request to %s: %s", endpoint, exc)
-            return None
+            raise RuntimeError(f"Cloudflare request failed: {method} {endpoint}: {exc}") from exc
 
         if isinstance(response, dict) and "result" in response:
             return response.get("result")
         return response
 
-    def _handle_paginated_get(self, url: str, endpoint: str, params, **kwargs) -> Any:
+    def _handle_paginated_get(
+        self, url: str, endpoint: str, params: dict[str, Any] | None, **kwargs: Any
+    ) -> list[dict[str, Any]] | Any:
         """
         Handle GET requests with automatic pagination.
 
@@ -345,9 +351,9 @@ class CloudflareAPI:
             **kwargs: Additional request arguments.
 
         Returns:
-            Any: List of results (paginated) or single result, None on error.
+            List of results (paginated) or a single result for non-paginated GET endpoints.
         """
-        all_results: List[Dict[str, Any]] = []
+        all_results: list[dict[str, Any]] = []
         page = 1
         per_page = 50  # Maximum allowed by Cloudflare API
 
@@ -359,8 +365,7 @@ class CloudflareAPI:
                 response = self._simple_request("GET", url, params=request_params, **kwargs)
 
                 if "result" not in response:
-                    logger.warning("No 'result' key in response: %s", response)
-                    break
+                    raise ValueError(f"Unexpected Cloudflare response (missing 'result') for {endpoint}: {response}")
 
                 # Non-paginated response (no result_info)
                 if "result_info" not in response:
@@ -373,11 +378,9 @@ class CloudflareAPI:
                     break
                 page += 1
 
-            logger.debug("Retrieved %s results from %s", len(all_results), endpoint)
             return all_results
         except (RequestException, ValueError, KeyError, TypeError) as exc:
-            logger.error("Error processing request to %s: %s", endpoint, exc)
-            return None
+            raise RuntimeError(f"Cloudflare request failed: GET {endpoint}: {exc}") from exc
 
     def get_zone_id(self, zone_name: str) -> str:
         """
